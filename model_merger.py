@@ -21,7 +21,21 @@ class ModelMerger:
         "smooth_add_difference": lambda tensors, ratios: tensors[0] + torch.tanh(sum((t - tensors[0]) * r for t, r in zip(tensors[1:], ratios[1:]))),
         "geometric": lambda tensors, ratios: torch.prod(torch.stack([torch.pow(t, r) for t, r in zip(tensors, ratios)]), dim=0),
         "tensor_sum": lambda tensors, ratios: torch.stack([t * r for t, r in zip(tensors, ratios)]).sum(0),
-        "triple_sum": lambda tensors, ratios: sum(t * r for t, r in zip(tensors, ratios)) / torch.norm(tensors[0])
+        "triple_sum": lambda tensors, ratios: sum(t * r for t, r in zip(tensors, ratios)) / torch.norm(tensors[0]),
+        "quadratic": lambda tensors, ratios: tensors[0] + sum((t - tensors[0]) * r * r for t, r in zip(tensors[1:], ratios[1:])),
+        "cubic": lambda tensors, ratios: tensors[0] + sum((t - tensors[0]) * r * r * r for t, r in zip(tensors[1:], ratios[1:])),
+        "exponential": lambda tensors, ratios: tensors[0] + sum((t - tensors[0]) * torch.exp(torch.tensor(r)) for t, r in zip(tensors[1:], ratios[1:])),
+        "logarithmic": lambda tensors, ratios: tensors[0] + sum((t - tensors[0]) * torch.log1p(torch.tensor(r)) for t, r in zip(tensors[1:], ratios[1:])),
+        "cosine": lambda tensors, ratios: tensors[0] + sum((t - tensors[0]) * torch.cos(torch.tensor(r * np.pi/2)) for t, r in zip(tensors[1:], ratios[1:])),
+        "inverse": lambda tensors, ratios: sum(t * (1/r if r > 0 else 1) for t, r in zip(tensors, ratios)) / sum(1/r if r > 0 else 1 for r in ratios),
+        "softmax": lambda tensors, ratios: sum(t * torch.softmax(torch.tensor(ratios), dim=0)[i] for i, t in enumerate(tensors)),
+        "harmonic": lambda tensors, ratios: len(tensors) / sum(1/(t * r + 1e-8) for t, r in zip(tensors, ratios)),
+        "elastic": lambda tensors, ratios: tensors[0] + torch.sinh(sum((t - tensors[0]) * r for t, r in zip(tensors[1:], ratios[1:]))),
+        "squared_geometric": lambda tensors, ratios: torch.prod(torch.stack([torch.pow(t, r*r) for t, r in zip(tensors, ratios)]), dim=0),
+        "adaptive": lambda tensors, ratios: sum(t * (r / (torch.norm(t) + 1e-8)) for t, r in zip(tensors, ratios)),
+        "crossfade": lambda tensors, ratios: sum(t * torch.sigmoid(torch.tensor(r * 10 - 5)) for t, r in zip(tensors, ratios)),
+        "gaussian": lambda tensors, ratios: sum(t * torch.exp(-torch.tensor((1-r)**2 * 4)) for t, r in zip(tensors, ratios)),
+        "magnitude_weighted": lambda tensors, ratios: sum(t * r * torch.norm(t) for t, r in zip(tensors, ratios)) / sum(torch.norm(t) for t in tensors)
     }
 
     def __init__(self, config: Dict[str, Any]):
