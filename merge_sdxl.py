@@ -14,7 +14,22 @@ MERGE_METHODS = {
     "SMOOTH": "smooth_add_difference",
     "GEOMEAN": "geometric",
     "TENSOR": "tensor_sum",
-    "TRIPLE": "triple_sum"
+    "TRIPLE": "triple_sum",
+    "SG": "squared_geometric",
+    "COS": "cosine",
+    "QUAD": "quadratic",
+    "CB": "cubic",
+    "EXP": "exponential",
+    "LOG": "logarithmic",
+    "INV": "inverse",
+    "MW": "magnitude_weighted",
+    "GAU": "gaussian",
+    "CF": "crossfade",
+    "ADV": "adaptive",
+    "SGEO": "squared_geometric",
+    "EL": "elastic",
+    "HAR": "harmonic",
+    "SMX" "softmax"
 }
 
 PRECISION_TYPES = {
