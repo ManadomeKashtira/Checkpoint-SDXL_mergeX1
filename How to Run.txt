@@ -1,5 +1,5 @@
 !python run_merger.py \
-  --models /content/Mergeoutput/merged.safetensors /content/Checkpoint1/illustriousXL_smoothftSOLID.safetensors \
+  --models /content/Mergeoutput/chekpoint_A.safetensors /content/Mycheckpoint/checkpoint_B.safetensors \
   --output /content/Mergeoutput/merged1.safetensors \
   --method weighted_sum \
   --precision prunefp16 \
