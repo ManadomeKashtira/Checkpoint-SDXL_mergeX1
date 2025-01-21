@@ -1,10 +1,9 @@
-!python run_merger.py \
-  --models /content/Mergeoutput/chekpoint_A.safetensors /content/Mycheckpoint/checkpoint_B.safetensors \
-  --output /content/Mergeoutput/merged1.safetensors \
-  --method weighted_sum \
-  --precision prunefp16 \
-  --seed 1851313 \
-  --alpha 0.4 \
-  --beta 0.0 \
-  --save-seed \
-  --vae-source first
+!python merge_sdxl.py \
+--models /content/Checkpoint_A.safetensors /content/Checkpoint_B.safetensors \
+--output /content/merged.safetensors \
+--method WS \
+--alpha 0.4 \
+--device cpu \
+--precision fp16 \
+--chunk-size 250 \
+--vae-source first
