@@ -23,6 +23,13 @@ class ModelMerger:
         "tensor_sum": lambda tensors, ratios: torch.stack([t * r for t, r in zip(tensors, ratios)]).sum(0),
         "sum_twice": lambda tensors, ratios: sum(tensors[0] + t * r for t, r in zip(tensors[1:], ratios[1:])) / len(tensors[1:])
     }
+     
+    PRECISION_TYPES = {
+        "fp16": torch.float16,
+        "bf16": torch.bfloat16,
+        "fp32": torch.float32,
+        "prunefp16": "prunefp16"  # Special handling for pruned FP16
+    }
 
     def __init__(self, config):
         self.config = config
