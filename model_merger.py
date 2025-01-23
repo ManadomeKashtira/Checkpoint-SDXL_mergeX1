@@ -2,16 +2,28 @@ import os
 import json
 import torch
 import random
+import hashlib
+import uuid
+import logging
 from datetime import datetime
 from safetensors.torch import load_file, save_file
 from tqdm import tqdm
 import gc
 import numpy as np
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 class ModelMerger:
-    """Memory-optimized SDXL Model Merger"""
+    """
+    Advanced SDXL Model Merger with Comprehensive Error Tracking and Diagnostics
     
+    Features:
+    - Memory-optimized tensor merging
+    - Multiple merging methods
+    - Detailed error logging
+    - Comprehensive merge statistics
+    """
+    
+    # Existing merge methods from previous implementation
     MERGE_METHODS = {
         "weighted_sum": lambda tensors, ratios: sum(t * r for t, r in zip(tensors, ratios)),
         "sigmoid": lambda tensors, ratios: torch.sigmoid(sum(t * r for t, r in zip(tensors[1:], ratios[1:]))) * tensors[0],
@@ -39,24 +51,89 @@ class ModelMerger:
     }
 
     def __init__(self, config: Dict[str, Any]):
+        """
+        Initialize ModelMerger with advanced configuration and logging
+        
+        Args:
+            config (Dict[str, Any]): Configuration dictionary for model merging
+        """
+        # Setup logging
+        logging.basicConfig(
+            level=logging.INFO, 
+            format='%(asctime)s - %(levelname)s: %(message)s',
+            handlers=[
+                logging.FileHandler('model_merge.log'),
+                logging.StreamHandler()
+            ]
+        )
+        self.logger = logging.getLogger(__name__)
+
+        # Configuration and initialization
         self.config = config
         self.merge_method = self.MERGE_METHODS[config["merge_method"]]
         self.precision = config["precision"]
-        self.chunk_size = config["chunk_size"]
-        self.device = self._setup_device(config["device"])
+        self.chunk_size = config.get("chunk_size", 100)
+        self.device = self._setup_device(config.get("device", "cuda"))
         
-        # Set random seed
-        torch.manual_seed(config["merge_seed"])
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed(config["merge_seed"])
+        # Enhanced metadata initialization
+        self.merge_metadata = {
+            "merge_id": str(uuid.uuid4()),
+            "timestamp": datetime.now().isoformat(),
+            "source_models": config["model_paths"],
+            "merge_method": config["merge_method"],
+            "merge_parameters": {
+                "alpha": config.get("alpha", 0.5),
+                "beta": config.get("beta", 0),
+                "precision": config["precision"]
+            },
+            "model_checksums": {},
+            "merge_stats": {
+                "total_tensors": 0,
+                "merged_tensors": 0,
+                "error_tensors": 0,
+                "skipped_tensors": 0
+            },
+            "error_details": []
+        }
         
-        # Calculate ratios
+        # Random seed management
+        self._set_random_seeds(config.get("merge_seed", 42))
+        
+        # Calculate merge ratios
         self.num_models = len(config["model_paths"])
-        if self.num_models == 2:
-            self.ratios = [1 - config["alpha"], config["alpha"]]
-        else:
-            self.ratios = [1 - config["alpha"] - config["beta"], config["alpha"], config["beta"]]
+        self.ratios = self._calculate_merge_ratios(config)
 
+    def _set_random_seeds(self, seed: int):
+        """Set consistent random seeds for reproducibility"""
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+        random.seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+
+    def _calculate_merge_ratios(self, config: Dict[str, Any]) -> List[float]:
+        """
+        Calculate merge ratios based on number of models
+        
+        Args:
+            config (Dict[str, Any]): Merge configuration
+        
+        Returns:
+            List[float]: Calculated merge ratios
+        """
+        if self.num_models == 2:
+            return [1 - config["alpha"], config["alpha"]]
+        else:
+            return [1 - config["alpha"] - config["beta"], config["alpha"], config["beta"]]
+   
+    def _calculate_model_hash(self, model_path: str) -> str:
+        """Calculate SHA256 hash of the model file"""
+        sha256_hash = hashlib.sha256()
+        with open(model_path, "rb") as f:
+            for byte_block in iter(lambda: f.read(4096), b""):
+                sha256_hash.update(byte_block)
+        return sha256_hash.hexdigest()
+    
     def _setup_device(self, device_name: str) -> torch.device:
         """Setup computation device"""
         if device_name == 'tpu':
@@ -78,97 +155,184 @@ class ModelMerger:
             "fp32": torch.float32
         }[self.precision]
 
-    def merge_tensors(self, tensors: List[torch.Tensor], component_type: str, key: str) -> torch.Tensor:
-        """Memory-efficient tensor merging"""
+    def merge_tensors(
+        self, 
+        tensors: List[torch.Tensor], 
+        component_type: str, 
+        key: str
+    ) -> Optional[torch.Tensor]:
+        """
+        Memory-efficient and robust tensor merging with comprehensive error handling
+        
+        Args:
+            tensors (List[torch.Tensor]): Tensors to merge
+            component_type (str): Type of model component
+            key (str): Tensor key for identification
+        
+        Returns:
+            Optional[torch.Tensor]: Merged tensor or None if merging fails
+        """
         try:
-            # Handle VAE
+            # VAE special handling
             if component_type == 'VAE':
-                vae_idx = {"first": 0, "second": 1, "last": -1}[self.config["vae_source"]]
-                return tensors[vae_idx].clone()
+                vae_source = self.config.get("vae_source", "first")
+                vae_index_map = {"first": 0, "second": 1, "last": -1}
+                return tensors[vae_index_map[vae_source]].clone()
 
-            # Convert to target precision
+            # Precision and device conversion
             dtype = self._get_dtype()
             device_tensors = [t.to(self.device, dtype=dtype) for t in tensors]
 
-            # Merge
+            # Merge tensors
             merged = self.merge_method(device_tensors, self.ratios)
 
-            # Handle pruning if specified
+            # Optional pruning
             if self.precision == "prune":
-                threshold = self.config["prune_threshold"]
+                threshold = self.config.get("prune_threshold", 1e-4)
                 mask = torch.abs(merged) > threshold
                 merged = merged * mask
 
-            # Move back to CPU and convert to target precision
-            merged = merged.cpu().to(dtype)
-
-            return merged
+            # Post-processing
+            merged_result = merged.cpu().to(dtype)
+            
+            # Update merge statistics
+            self.merge_metadata["merge_stats"]["merged_tensors"] += 1
+            
+            return merged_result
 
         except Exception as e:
-            print(f"Error merging {key}: {str(e)}")
-            return tensors[0].clone()
+            # Comprehensive error tracking
+            error_info = {
+                "key": key,
+                "component_type": component_type,
+                "error_message": str(e),
+                "tensor_shapes": [t.shape for t in tensors]
+            }
+            
+            self.logger.error(f"Tensor Merge Error: {error_info}")
+            self.merge_metadata["merge_stats"]["error_tensors"] += 1
+            self.merge_metadata["error_details"].append(error_info)
+            
+            return None
 
-    def process_chunk(self, chunk_keys: List[str], models: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
-        """Process a chunk of tensors"""
+    def merge(self) -> bool:
+      try:
+          # Model checksums and initial diagnostics
+          self._calculate_model_checksums()
+        
+          # Load models
+          models = self._load_models()
+        
+          # Tensor key management
+          all_keys = list(models[0].keys())
+          total_tensors = len(all_keys)
+          self.merge_metadata["merge_stats"]["total_tensors"] = total_tensors
+        
+          self.logger.info(f"Starting merge of {total_tensors} tensors")
+        
+          # Chunk-based processing
+          for i in tqdm(range(0, total_tensors, self.chunk_size), desc="Merging"):
+              chunk_keys = all_keys[i:i + self.chunk_size]
+              chunk_result = self._process_tensor_chunk(chunk_keys, models)
+            
+            # Save chunk immediately and clear from memory
+              self._save_merged_model(chunk_result)
+              del chunk_result
+            
+               # Memory management
+              gc.collect()
+              if torch.cuda.is_available():
+                   torch.cuda.empty_cache()
+        
+            # Save detailed metadata
+          self._save_merge_metadata()
+          self._log_merge_summary()
+        
+          return True
+
+      except Exception as e:
+           self.logger.error(f"Comprehensive merge failure: {e}")
+           return False
+
+    def _calculate_model_checksums(self):
+        """Calculate and store SHA256 checksums for source models"""
+        for path in self.config["model_paths"]:
+            self.merge_metadata["model_checksums"][path] = self._calculate_model_hash(path)
+
+    def _load_models(self) -> List[Dict[str, torch.Tensor]]:
+        """
+        Load source models with diagnostic logging
+        
+        Returns:
+            List[Dict[str, torch.Tensor]]: Loaded model tensors
+        """
+        models = []
+        for path in self.config["model_paths"]:
+            model = load_file(path)
+            models.append(model)
+            self.logger.info(f"Loaded model: {path} with {len(model)} tensors")
+        return models
+
+    def _process_tensor_chunk(
+        self, 
+        chunk_keys: List[str], 
+        models: List[Dict[str, torch.Tensor]]
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Process a chunk of tensors with robust error handling
+        
+        Args:
+            chunk_keys (List[str]): Keys to process in this chunk
+            models (List[Dict[str, torch.Tensor]]): Source models
+        
+        Returns:
+            Dict[str, torch.Tensor]: Successfully merged tensors
+        """
         chunk_result = {}
         for key in chunk_keys:
             if key not in models[0]:
+                self.merge_metadata["merge_stats"]["skipped_tensors"] += 1
                 continue
 
             component_type = self.get_component_type(key)
             tensors = [m.get(key, torch.zeros_like(models[0][key])) for m in models]
+            
             merged_tensor = self.merge_tensors(tensors, component_type, key)
-            chunk_result[key] = merged_tensor
+            if merged_tensor is not None:
+                chunk_result[key] = merged_tensor
 
         return chunk_result
 
-    def merge(self) -> bool:
-        """Perform memory-efficient model merge"""
-        try:
-            # Load model keys first
-            print("\nLoading model keys...")
-            models = []
-            for path in self.config["model_paths"]:
-                models.append(load_file(path))
-                print(f"Loaded: {path}")
-
-            # Get all keys
-            all_keys = list(models[0].keys())
-            total_tensors = len(all_keys)
-            
-            # Process in chunks
-            print(f"\nMerging {total_tensors} tensors in chunks of {self.chunk_size}...")
-            for i in tqdm(range(0, total_tensors, self.chunk_size)):
-                chunk_keys = all_keys[i:i + self.chunk_size]
-                chunk_result = self.process_chunk(chunk_keys, models)
-                
-                # Save chunk
-                self._save_checkpoint(chunk_result)
-                
-                # Clear memory
-                del chunk_result
-                gc.collect()
-                torch.cuda.empty_cache() if torch.cuda.is_available() else None
-
-            return True
-
-        except Exception as e:
-            print(f"Error during merge: {str(e)}")
-            return False
-
-    def _save_checkpoint(self, merged_tensors: Dict[str, torch.Tensor]) -> None:
-        """Save merged tensors"""
+    def _save_merged_model(self, merged_result: Dict[str, torch.Tensor]):
+        """Save merged tensors using checkpoint-based method"""
         try:
             if os.path.exists(self.config["output_path"]):
                 existing = load_file(self.config["output_path"])
-                existing.update(merged_tensors)
+                existing.update(merged_result)
                 save_file(existing, self.config["output_path"])
             else:
-                save_file(merged_tensors, self.config["output_path"])
+                 save_file(merged_result, self.config["output_path"])
+        
+            self.logger.info(f"Merged model saved to: {self.config['output_path']}")
         except Exception as e:
-            print(f"Error saving checkpoint: {str(e)}")
-            raise
+            self.logger.error(f"Error saving merged model: {e}") 
 
+    def _save_merge_metadata(self):
+        """Save comprehensive merge metadata"""
+        metadata_path = f"{os.path.splitext(self.config['output_path'])[0]}_metadata.json"
+        with open(metadata_path, 'w') as f:
+            json.dump(self.merge_metadata, f, indent=2)
+        self.logger.info(f"Metadata saved to: {metadata_path}")
+
+    def _log_merge_summary(self):
+        """Log a comprehensive summary of the merge operation"""
+        stats = self.merge_metadata["merge_stats"]
+        self.logger.info("Merge Operation Summary:")
+        self.logger.info(f"Total Tensors: {stats['total_tensors']}")
+        self.logger.info(f"Merged Tensors: {stats['merged_tensors']}")
+        self.logger.info(f"Error Tensors: {stats['error_tensors']}")
+        self.logger.info(f"Skipped Tensors: {stats['skipped_tensors']}")
+  
     def get_component_type(self, key: str) -> str:
         """Identify SDXL component type"""
         if 'model.diffusion_model' in key:
