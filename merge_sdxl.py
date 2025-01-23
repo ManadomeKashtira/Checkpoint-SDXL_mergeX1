@@ -29,7 +29,7 @@ MERGE_METHODS = {
     "SGEO": "squared_geometric",
     "EL": "elastic",
     "HAR": "harmonic",
-    "SMX" "softmax"
+    "SMX": "softmax"
 }
 
 PRECISION_TYPES = {
